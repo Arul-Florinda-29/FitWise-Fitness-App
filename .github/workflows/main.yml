@@ -1,0 +1,314 @@
+name: Generate and Build FitWise Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate native Android project
+        shell: bash
+        run: |
+          mkdir -p android/app/src/main/java/com/fitwise/app
+          mkdir -p android/app/src/main/res/values
+
+          cat > android/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "FitWise"
+          include(":app")
+          EOF
+
+          cat > android/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > android/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > android/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.fitwise.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.fitwise.app'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:label="FitWise"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > android/app/src/main/java/com/fitwise/app/MainActivity.java <<'EOF'
+          package com.fitwise.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.view.View;
+          import android.widget.*;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+              private LinearLayout page;
+              private SharedPreferences prefs;
+              private EditText weight, height, age, water, sleep;
+              private TextView bmiResult, waterResult, sleepResult, coachResult, reviewResult;
+              private double lastBmi = 0;
+
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  prefs = getSharedPreferences("fitwise_data", MODE_PRIVATE);
+                  ScrollView scroll = new ScrollView(this);
+                  page = new LinearLayout(this);
+                  page.setOrientation(LinearLayout.VERTICAL);
+                  page.setPadding(28, 36, 28, 36);
+                  page.setBackgroundColor(Color.rgb(246, 250, 247));
+                  scroll.addView(page);
+                  setContentView(scroll);
+
+                  title("FITWISE", 30);
+                  subtitle("Your personal fitness and wellness planner");
+                  section("Your profile");
+                  age = field("Age (years)");
+                  weight = field("Weight (kg)");
+                  height = field("Height (cm)");
+                  Button calc = button("Calculate BMI");
+                  page.addView(calc);
+                  bmiResult = text("Enter your details to calculate BMI.");
+                  page.addView(bmiResult);
+                  calc.setOnClickListener(v -> calculateBmi());
+
+                  section("Personalized diet plan");
+                  Button diet = button("Generate today's diet plan");
+                  page.addView(diet);
+                  diet.setOnClickListener(v -> showDiet());
+
+                  section("Workout recommendation");
+                  Button workout = button("Generate today's workout");
+                  page.addView(workout);
+                  workout.setOnClickListener(v -> showWorkout());
+
+                  section("Water tracker");
+                  water = field("Glasses of water consumed");
+                  water.setText(String.valueOf(prefs.getInt("water", 0)));
+                  Button saveWater = button("Save water intake");
+                  page.addView(saveWater);
+                  waterResult = text("");
+                  page.addView(waterResult);
+                  saveWater.setOnClickListener(v -> saveWater());
+
+                  section("Sleep tracker");
+                  sleep = field("Hours slept last night");
+                  Button saveSleep = button("Save sleep");
+                  page.addView(saveSleep);
+                  sleepResult = text("");
+                  page.addView(sleepResult);
+                  saveSleep.setOnClickListener(v -> saveSleep());
+
+                  section("Weekly experience review");
+                  Button review = button("Submit weekly feedback");
+                  page.addView(review);
+                  reviewResult = text("Tell FitWise how your plan felt this week.");
+                  page.addView(reviewResult);
+                  review.setOnClickListener(v -> weeklyReview());
+
+                  section("Smart Coach");
+                  Button coach = button("Get my daily insight");
+                  page.addView(coach);
+                  coachResult = text("Your daily coaching insight will appear here.");
+                  page.addView(coachResult);
+                  coach.setOnClickListener(v -> smartCoach());
+
+                  section("Progress");
+                  TextView progress = text("Your BMI, water and sleep entries are saved on this device.");
+                  page.addView(progress);
+                  Button reset = button("Reset today's water count");
+                  page.addView(reset);
+                  reset.setOnClickListener(v -> {
+                      prefs.edit().putInt("water", 0).apply();
+                      water.setText("0");
+                      waterResult.setText("Water count reset.");
+                  });
+              }
+
+              private void title(String s, int size) {
+                  TextView t = text(s); t.setTextSize(size); t.setTextColor(Color.rgb(27, 105, 65));
+                  t.setTypeface(null, 1); page.addView(t);
+              }
+              private void subtitle(String s) {
+                  TextView t = text(s); t.setTextColor(Color.DKGRAY); page.addView(t);
+              }
+              private void section(String s) {
+                  TextView t = text(s); t.setTextSize(21); t.setTypeface(null, 1);
+                  t.setTextColor(Color.rgb(30, 100, 65)); t.setPadding(0, 28, 0, 8); page.addView(t);
+              }
+              private TextView text(String s) {
+                  TextView t = new TextView(this); t.setText(s); t.setTextSize(16);
+                  t.setTextColor(Color.rgb(45, 55, 48)); t.setPadding(0, 10, 0, 10); return t;
+              }
+              private EditText field(String hint) {
+                  EditText e = new EditText(this); e.setSingleLine(true); e.setHint(hint);
+                  e.setTextSize(16); page.addView(e); return e;
+              }
+              private Button button(String s) {
+                  Button b = new Button(this); b.setText(s); return b;
+              }
+              private double number(EditText e) {
+                  return Double.parseDouble(e.getText().toString().trim());
+              }
+              private void calculateBmi() {
+                  try {
+                      double w = number(weight), h = number(height);
+                      if (w <= 0 || h <= 0 || h > 260) throw new IllegalArgumentException();
+                      lastBmi = w / Math.pow(h / 100.0, 2);
+                      String category = lastBmi < 18.5 ? "Underweight" :
+                          lastBmi < 25 ? "Normal range" :
+                          lastBmi < 30 ? "Overweight" : "Obesity range";
+                      bmiResult.setText(String.format(Locale.US,
+                          "Your BMI: %.1f\\nCategory: %s\\nBMI is a screening measure, not a diagnosis.",
+                          lastBmi, category));
+                      prefs.edit().putFloat("bmi", (float) lastBmi).apply();
+                  } catch (Exception ex) {
+                      bmiResult.setText("Please enter valid positive weight and height.");
+                  }
+              }
+              private void showDiet() {
+                  int day = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR) % 7;
+                  String[][] meals = {
+                      {"Oats, milk and banana", "Rice, dal, vegetables and curd", "Chapati with paneer/tofu and vegetables"},
+                      {"Idli with sambar", "Brown rice, channa and salad", "Vegetable dosa with sambar"},
+                      {"Vegetable upma and curd", "Chapati, dal and greens", "Rice, mixed vegetables and lentils"},
+                      {"Dosa with sambar", "Rice, rajma and salad", "Chapati with vegetable kurma"},
+                      {"Poha with peanuts", "Millet rice, sambar and poriyal", "Paneer/tofu wrap and salad"},
+                      {"Pongal with sambar", "Rice, dal and vegetable kootu", "Chapati with chickpeas"},
+                      {"Ragi dosa and sambar", "Curd rice with vegetables and pulses", "Vegetable pulao with raita"}
+                  };
+                  String[] m = meals[day];
+                  new android.app.AlertDialog.Builder(this).setTitle("Today's balanced meal ideas")
+                      .setMessage("Breakfast: " + m[0] + "\\n\\nLunch: " + m[1] +
+                          "\\n\\nDinner: " + m[2] +
+                          "\\n\\nAdjust portions to your needs and avoid any foods you are allergic to.")
+                      .setPositiveButton("OK", null).show();
+              }
+              private void showWorkout() {
+                  String goal = "General fitness";
+                  new android.app.AlertDialog.Builder(this).setTitle("Today's beginner workout")
+                      .setMessage("• 5-minute warm-up walk\\n• 2 sets of 10 chair squats\\n" +
+                          "• 2 sets of 8 wall push-ups\\n• 10-minute comfortable walk\\n" +
+                          "• Gentle stretching and cool-down\\n\\nChoose an intensity suitable for your ability. Stop if you feel pain or dizziness.")
+                      .setPositiveButton("Done", null).show();
+              }
+              private void saveWater() {
+                  try {
+                      int n = Integer.parseInt(water.getText().toString().trim());
+                      if (n < 0 || n > 40) throw new Exception();
+                      prefs.edit().putInt("water", n).apply();
+                      waterResult.setText("Saved: " + n + " glasses. Drink according to your thirst and health needs.");
+                  } catch (Exception e) { waterResult.setText("Enter a valid number from 0 to 40."); }
+              }
+              private void saveSleep() {
+                  try {
+                      double h = number(sleep);
+                      if (h < 0 || h > 24) throw new Exception();
+                      prefs.edit().putFloat("sleep", (float) h).apply();
+                      sleepResult.setText(String.format(Locale.US, "Saved: %.1f hours of sleep.", h));
+                  } catch (Exception e) { sleepResult.setText("Enter sleep hours between 0 and 24."); }
+              }
+              private void weeklyReview() {
+                  final String[] choices = {"Too easy", "Just right", "Too difficult"};
+                  new android.app.AlertDialog.Builder(this).setTitle("How did your plan feel?")
+                      .setSingleChoiceItems(choices, -1, (dialog, which) -> {
+                          prefs.edit().putString("weekly_feedback", choices[which]).apply();
+                          reviewResult.setText("Feedback saved: " + choices[which] +
+                              ". Use this feedback when adjusting your next week's plan.");
+                          dialog.dismiss();
+                      }).setNegativeButton("Cancel", null).show();
+              }
+              private void smartCoach() {
+                  int glasses = prefs.getInt("water", 0);
+                  float hours = prefs.getFloat("sleep", 0);
+                  String insight = glasses < 6 ? "Remember to stay hydrated throughout the day." :
+                      hours > 0 && hours < 7 ? "Try to maintain a consistent sleep routine." :
+                      "Keep building consistent habits with balanced meals and comfortable activity.";
+                  coachResult.setText(insight);
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitWise-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
