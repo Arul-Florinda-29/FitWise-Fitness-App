@@ -1,0 +1,8 @@
+{
+  "appId": "com.fitwise.app",
+  "appName": "FitWise",
+  "webDir": "mobile-app",
+  "server": {
+    "androidScheme": "https"
+  }
+}
